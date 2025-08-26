@@ -1,1 +1,8 @@
-
+{
+  "name": "clickup-webhook",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "cross-fetch": "4.0.0"
+  }
+}
