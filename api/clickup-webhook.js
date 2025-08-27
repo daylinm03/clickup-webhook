@@ -1,13 +1,21 @@
+// api/clickup-webhook.js
 import crypto from "node:crypto";
 import fetch from "cross-fetch";
 
+// Optional: set DEBUG="true" in Vercel envs to see extra logs
 const isDebug = () => process.env.DEBUG === "true";
+
+// Optional (recommended): configure these in Vercel envs; else fallback to literals
+const SECUNDA_LIST_ID = process.env.SECUNDA_LIST_ID || "901205280473";
+const JOB_TRACKER_LIST_ID = process.env.JOB_TRACKER_LIST_ID || "901211501276";
 
 export default async function handler(req, res) {
   try {
-    if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
+    if (req.method !== "POST") {
+      return res.status(405).json({ ok: false, error: "Method not allowed" });
+    }
 
-    // 1) Verify signature over RAW body
+    // 1) Verify signature over RAW body (required for ClickUp webhooks)
     const raw = await readRawBody(req);
     const secret = process.env.CLICKUP_WEBHOOK_SECRET;
     const sig = req.headers["x-signature"];
@@ -16,9 +24,13 @@ export default async function handler(req, res) {
     const expected = crypto.createHmac("sha256", secret).update(raw).digest("hex");
     if (sig !== expected) return res.status(401).json({ ok: false, error: "Invalid signature" });
 
-    // 2) Parse payload
+    // 2) Parse payload after verifying
     let body;
-    try { body = JSON.parse(raw); } catch { return res.status(400).json({ ok: false, error: "Invalid JSON" }); }
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      return res.status(400).json({ ok: false, error: "Invalid JSON" });
+    }
 
     const event  = body?.event;
     const taskId = body?.task_id || body?.task?.id || body?.payload?.task_id;
@@ -27,34 +39,37 @@ export default async function handler(req, res) {
 
     if (isDebug()) console.log("event:", event, "taskId:", taskId, "listId:", listId);
 
-    // If we care about list filtering and listId is missing, fetch it once
-    if (!listId && targetListId && taskId) {
+    // PATCH: always resolve listId if missing so our rules can run
+    if (!listId && taskId) {
       listId = await getListIdForTask(taskId);
-      if (isDebug()) console.log("fetched listId:", listId);
+      if (isDebug()) console.log("resolved listId via task lookup:", listId);
     }
 
+    // Optional list filter: if set and mismatch, politely skip
     if (targetListId && String(listId) !== String(targetListId)) {
       return res.status(200).json({ ok: true, skipped: "Different list" });
     }
 
-    // IDs you gave me (use env vars if you prefer)
-  const SECUNDA_LIST_ID = "901205280473";
-  const JOB_TRACKER_LIST_ID = "901211501276";
-  
-  // 3) Actions
-  if (event === "taskCreated" && taskId) {
-    // A) If created in Secunda Design, add to Job Tracker
-    if (String(listId) === SECUNDA_LIST_ID) {
-      const linked = await addTaskToList(JOB_TRACKER_LIST_ID, taskId);
-      if (isDebug()) console.log("added to Job Tracker:", linked);
+    // 3) Actions
+    if (event === "taskCreated" && taskId) {
+      const actions = {};
+
+      // A) If created in Secunda Design, also attach to Job Tracker (like "Add to another List")
+      if (String(listId) === String(SECUNDA_LIST_ID)) {
+        const linked = await addTaskToList(JOB_TRACKER_LIST_ID, taskId);
+        actions.addedToJobTracker = linked;
+        if (isDebug()) console.log("added to Job Tracker:", linked);
+      }
+
+      // B) Stamp To-Be-Invoiced Date+Time (Date field expects epoch ms)
+      const fieldId = process.env.TO_BE_INVOICED_FIELD_ID;
+      if (fieldId) {
+        const stamped = await setDateField(taskId, fieldId, Date.now());
+        actions.dateStamped = stamped;
+      }
+
+      return res.status(200).json({ ok: true, taskId, listId, actions });
     }
-    // B) Your existing “To-Be-Invoiced Date” stamp
-    const fieldId = process.env.TO_BE_INVOICED_FIELD_ID;
-    if (fieldId) {
-      await setDateField(taskId, fieldId, Date.now());
-    }
-    return res.status(200).json({ ok: true, did: ["maybe-linked", "maybe-dated"], taskId });
-  }
 
     // No-op for unhandled events
     return res.status(200).json({ ok: true });
@@ -64,6 +79,7 @@ export default async function handler(req, res) {
   }
 }
 
+/** Read raw request body (needed for HMAC verification) */
 function readRawBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -73,6 +89,23 @@ function readRawBody(req) {
   });
 }
 
+/** Resolve a task's list id (used when webhook payload omits list_id) */
+async function getListIdForTask(taskId) {
+  try {
+    const token = process.env.CLICKUP_TOKEN;
+    if (!token) return undefined;
+    const r = await fetch(`https://api.clickup.com/api/v2/task/${encodeURIComponent(taskId)}`, {
+      headers: { Authorization: token }
+    });
+    if (!r.ok) return undefined;
+    const t = await r.json();
+    return t?.list?.id;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Add an existing task to another list (ClickUp "Tasks in Multiple Lists" feature) */
 async function addTaskToList(targetListId, taskId) {
   const token = process.env.CLICKUP_TOKEN;
   const url = `https://api.clickup.com/api/v2/list/${encodeURIComponent(targetListId)}/task/${encodeURIComponent(taskId)}`;
@@ -88,19 +121,7 @@ async function addTaskToList(targetListId, taskId) {
   return true;
 }
 
-async function getListIdForTask(taskId) {
-  try {
-    const token = process.env.CLICKUP_TOKEN;
-    if (!token) return undefined;
-    const r = await fetch(`https://api.clickup.com/api/v2/task/${encodeURIComponent(taskId)}`, {
-      headers: { Authorization: token }
-    });
-    if (!r.ok) return undefined;
-    const t = await r.json();
-    return t?.list?.id;
-  } catch { return undefined; }
-}
-
+/** Set a Date custom field (value must be epoch milliseconds) */
 async function setDateField(taskId, fieldId, epochMs) {
   const token = process.env.CLICKUP_TOKEN;
   if (!token) throw new Error("Missing CLICKUP_TOKEN");
