@@ -37,16 +37,24 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, skipped: "Different list" });
     }
 
-    // 3) Actions
-    if (event === "taskCreated" && taskId) {
-      const fieldId = process.env.TO_BE_INVOICED_FIELD_ID;
-      if (!fieldId) return res.status(500).json({ ok: false, error: "Missing TO_BE_INVOICED_FIELD_ID" });
-
-      const now = new Date();
-      const epochMs = now.getTime(); // full date+time in ms since 1970-01-01 UTC
-      const ok = await setDateField(taskId, fieldId, epochMs);
-      return res.status(200).json({ ok, did: ok ? "set date" : "failed", taskId });
+    // IDs you gave me (use env vars if you prefer)
+  const SECUNDA_LIST_ID = "901205280473";
+  const JOB_TRACKER_LIST_ID = "901211501276";
+  
+  // 3) Actions
+  if (event === "taskCreated" && taskId) {
+    // A) If created in Secunda Design, add to Job Tracker
+    if (String(listId) === SECUNDA_LIST_ID) {
+      const linked = await addTaskToList(JOB_TRACKER_LIST_ID, taskId);
+      if (isDebug()) console.log("added to Job Tracker:", linked);
     }
+    // B) Your existing “To-Be-Invoiced Date” stamp
+    const fieldId = process.env.TO_BE_INVOICED_FIELD_ID;
+    if (fieldId) {
+      await setDateField(taskId, fieldId, Date.now());
+    }
+    return res.status(200).json({ ok: true, did: ["maybe-linked", "maybe-dated"], taskId });
+  }
 
     // No-op for unhandled events
     return res.status(200).json({ ok: true });
@@ -63,6 +71,21 @@ function readRawBody(req) {
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
+}
+
+async function addTaskToList(targetListId, taskId) {
+  const token = process.env.CLICKUP_TOKEN;
+  const url = `https://api.clickup.com/api/v2/list/${encodeURIComponent(targetListId)}/task/${encodeURIComponent(taskId)}`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: token }
+  });
+  if (!r.ok) {
+    const txt = await r.text().catch(() => "");
+    console.error("Add to list failed:", r.status, txt);
+    return false;
+  }
+  return true;
 }
 
 async function getListIdForTask(taskId) {
