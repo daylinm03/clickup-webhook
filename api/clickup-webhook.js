@@ -6,16 +6,41 @@ import fetch from "cross-fetch";
 const DEBUG = process.env.DEBUG === "true";
 const log   = (...a) => { if (DEBUG) console.log(...a); };
 
-const SECRET = process.env.CLICKUP_WEBHOOK_SECRET;                          // required
-const TOKEN  = process.env.CLICKUP_TOKEN;                                   // required for API calls
+const SECRET = process.env.CLICKUP_WEBHOOK_SECRET;   // required
+const TOKEN  = process.env.CLICKUP_TOKEN;            // required for API calls
 
-// List IDs (env > fallback)
-const SECUNDA_LIST_ID      = process.env.SECUNDA_LIST_ID      || "901205280473";
-const VAAL_LIST_ID         = process.env.VAAL_LIST_ID         || "901207526223"; // <— NEW
-const JOB_TRACKER_LIST_ID  = process.env.JOB_TRACKER_LIST_ID  || "901211501276";
+// Target list to attach to (Job Tracker)
+const JOB_TRACKER_LIST_ID = process.env.JOB_TRACKER_LIST_ID || "901211501276";
 
-const TARGET_LIST_ID       = process.env.TARGET_LIST_ID || null;            // optional filter
-const TO_BE_INVOICED_ID    = process.env.TO_BE_INVOICED_FIELD_ID || null;   // optional action
+// Date field to set on taskCreated (NOT the To-Be-Invoiced field anymore)
+const DATE_FIELD_ID = process.env.DATE_FIELD_ID || "5497bac6-d964-434e-af6e-706995976c07";
+
+// Optional global filter, leave unset to react to all lists
+const TARGET_LIST_ID = process.env.TARGET_LIST_ID || null;
+
+// Source lists that should auto-attach to Job Tracker on taskCreated
+const SECUNDA_LIST_ID                = process.env.SECUNDA_LIST_ID                || "901205280473";
+const VAAL_LIST_ID                   = process.env.VAAL_LIST_ID                   || "901207526223";
+const SECUNDA_INJECTIONS_LIST_ID     = process.env.SECUNDA_INJECTIONS_LIST_ID     || "901207177834";
+const VAAL_INJECTIONS_LIST_ID        = process.env.VAAL_INJECTIONS_LIST_ID        || "901211448490";
+const MPUMALANGA_DESIGNS_LIST_ID     = process.env.MPUMALANGA_DESIGNS_LIST_ID     || "901208363216";
+const MPUMALANGA_INJECTIONS_LIST_ID  = process.env.MPUMALANGA_INJECTIONS_LIST_ID  || "901211504968";
+const SSSA_DESIGNS_LIST_ID           = process.env.SSSA_DESIGNS_LIST_ID           || "901211315230";
+const TCO_DESIGNS_LIST_ID            = process.env.TCO_DESIGNS_LIST_ID            || "901207432882";
+const INTLOCAL_DESIGNS_LIST_ID       = process.env.INTLOCAL_DESIGNS_LIST_ID       || "901208400956";
+
+// Build the source set (ignore any empty/undefined)
+const SOURCE_LIST_IDS = [
+  SECUNDA_LIST_ID,
+  VAAL_LIST_ID,
+  SECUNDA_INJECTIONS_LIST_ID,
+  VAAL_INJECTIONS_LIST_ID,
+  MPUMALANGA_DESIGNS_LIST_ID,
+  MPUMALANGA_INJECTIONS_LIST_ID,
+  SSSA_DESIGNS_LIST_ID,
+  TCO_DESIGNS_LIST_ID,
+  INTLOCAL_DESIGNS_LIST_ID,
+].filter(Boolean);
 
 // Unified ClickUp fetch helper
 async function cu(path, init = {}) {
@@ -33,6 +58,7 @@ async function cu(path, init = {}) {
   return { ok: true, status: r.status, json, text };
 }
 
+// Raw body reader (needed for HMAC)
 function readRawBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -46,7 +72,7 @@ function readRawBody(req) {
 export default async function handler(req, res) {
   try {
     if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
-    if (!SECRET)              return res.status(500).json({ ok: false, error: "Missing CLICKUP_WEBHOOK_SECRET" });
+    if (!SECRET) return res.status(500).json({ ok: false, error: "Missing CLICKUP_WEBHOOK_SECRET" });
 
     // 1) Verify HMAC over RAW body
     const raw = await readRawBody(req);
@@ -71,7 +97,7 @@ export default async function handler(req, res) {
       log("resolved listId via task lookup:", listId);
     }
 
-    // Optional filter by TARGET_LIST_ID
+    // Optional global filter by TARGET_LIST_ID
     if (TARGET_LIST_ID && String(listId) !== String(TARGET_LIST_ID)) {
       return res.status(200).json({ ok: true, skipped: "Different list" });
     }
@@ -80,20 +106,17 @@ export default async function handler(req, res) {
     if (event === "taskCreated" && taskId) {
       const actions = {};
 
-      // A) If created in Secunda OR Vaal Design, attach to Job Tracker (multi-list)
-      const shouldAttach =
-        String(listId) === String(SECUNDA_LIST_ID) ||
-        String(listId) === String(VAAL_LIST_ID);
-
+      // A) If created in any of the configured source lists, attach to Job Tracker (multi-list)
+      const shouldAttach = SOURCE_LIST_IDS.some(id => String(listId) === String(id));
       if (shouldAttach) {
         const add = await cu(`/list/${encodeURIComponent(JOB_TRACKER_LIST_ID)}/task/${encodeURIComponent(taskId)}`, { method: "POST" });
         actions.addedToJobTracker = add.ok;
         log("added to Job Tracker:", add.ok);
       }
 
-      // B) Stamp To-Be-Invoiced with Date+Time (epoch ms)
-      if (TO_BE_INVOICED_ID) {
-        const stamp = await cu(`/task/${encodeURIComponent(taskId)}/field/${encodeURIComponent(TO_BE_INVOICED_ID)}`, {
+      // B) Set the generic Date field (epoch ms) — replaces previous To-Be-Invoiced date action
+      if (DATE_FIELD_ID) {
+        const stamp = await cu(`/task/${encodeURIComponent(taskId)}/field/${encodeURIComponent(DATE_FIELD_ID)}`, {
           method: "POST",
           body: JSON.stringify({ value: Date.now() })
         });
