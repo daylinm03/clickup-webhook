@@ -42,7 +42,9 @@ export default async function handler(req, res) {
       const fieldId = process.env.TO_BE_INVOICED_FIELD_ID;
       if (!fieldId) return res.status(500).json({ ok: false, error: "Missing TO_BE_INVOICED_FIELD_ID" });
 
-      const ok = await setDateField(taskId, fieldId, Date.now());
+      const now = new Date();
+      const epochMs = now.getTime(); // full date+time in ms since 1970-01-01 UTC
+      const ok = await setDateField(taskId, fieldId, epochMs);
       return res.status(200).json({ ok, did: ok ? "set date" : "failed", taskId });
     }
 
