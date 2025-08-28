@@ -12,7 +12,7 @@ const TOKEN  = process.env.CLICKUP_TOKEN;            // required for API calls
 // Target list to attach to (Job Tracker)
 const JOB_TRACKER_LIST_ID = process.env.JOB_TRACKER_LIST_ID || "901211501276";
 
-// Date field to set on taskCreated (NOT the To-Be-Invoiced field anymore)
+// Date field to set on taskCreated (replaces prior To-Be-Invoiced action)
 const DATE_FIELD_ID = process.env.DATE_FIELD_ID || "5497bac6-d964-434e-af6e-706995976c07";
 
 // Optional global filter, leave unset to react to all lists
@@ -40,9 +40,11 @@ const SOURCE_LIST_IDS = [
   SSSA_DESIGNS_LIST_ID,
   TCO_DESIGNS_LIST_ID,
   INTLOCAL_DESIGNS_LIST_ID,
-].filter(Boolean);
+].filter(Boolean).map(String); // normalize to string once
 
-// Unified ClickUp fetch helper
+log("startup: SOURCE_LIST_IDS =", SOURCE_LIST_IDS.join(", "));
+
+/** Unified ClickUp fetch helper */
 async function cu(path, init = {}) {
   if (!TOKEN) throw new Error("Missing CLICKUP_TOKEN");
   const url = `https://api.clickup.com/api/v2${path}`;
@@ -50,7 +52,7 @@ async function cu(path, init = {}) {
   const r = await fetch(url, { ...init, headers });
   const text = await r.text().catch(() => "");
   if (!r.ok) {
-    if (DEBUG) console.error("ClickUp API error:", r.status, url, text?.slice(0, 500));
+    if (DEBUG) console.error("ClickUp API error:", r.status, url, text?.slice(0, 600));
     return { ok: false, status: r.status, text };
   }
   let json;
@@ -58,7 +60,7 @@ async function cu(path, init = {}) {
   return { ok: true, status: r.status, json, text };
 }
 
-// Raw body reader (needed for HMAC)
+/** Raw body reader (needed for HMAC) */
 function readRawBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -72,7 +74,7 @@ function readRawBody(req) {
 export default async function handler(req, res) {
   try {
     if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
-    if (!SECRET) return res.status(500).json({ ok: false, error: "Missing CLICKUP_WEBHOOK_SECRET" });
+    if (!SECRET)              return res.status(500).json({ ok: false, error: "Missing CLICKUP_WEBHOOK_SECRET" });
 
     // 1) Verify HMAC over RAW body
     const raw = await readRawBody(req);
@@ -99,6 +101,7 @@ export default async function handler(req, res) {
 
     // Optional global filter by TARGET_LIST_ID
     if (TARGET_LIST_ID && String(listId) !== String(TARGET_LIST_ID)) {
+      log("skipped due to TARGET_LIST_ID filter", { listId, TARGET_LIST_ID });
       return res.status(200).json({ ok: true, skipped: "Different list" });
     }
 
@@ -107,20 +110,33 @@ export default async function handler(req, res) {
       const actions = {};
 
       // A) If created in any of the configured source lists, attach to Job Tracker (multi-list)
-      const shouldAttach = SOURCE_LIST_IDS.some(id => String(listId) === String(id));
+      const shouldAttach = SOURCE_LIST_IDS.includes(String(listId));
+      log("shouldAttach?", shouldAttach, "listId:", String(listId));
+
       if (shouldAttach) {
         const add = await cu(`/list/${encodeURIComponent(JOB_TRACKER_LIST_ID)}/task/${encodeURIComponent(taskId)}`, { method: "POST" });
-        actions.addedToJobTracker = add.ok;
-        log("added to Job Tracker:", add.ok);
+
+        // Treat 409 "already attached" as success
+        const attached = add.ok || add.status === 409;
+        actions.addedToJobTracker = attached;
+
+        if (!attached) {
+          console.error("Add to Job Tracker failed:", { status: add.status, body: add.text?.slice(0, 600) });
+        } else {
+          log("added to Job Tracker:", attached, "(status:", add.status, ")");
+        }
       }
 
-      // B) Set the generic Date field (epoch ms) — replaces previous To-Be-Invoiced date action
+      // B) Set the generic Date field (epoch ms)
       if (DATE_FIELD_ID) {
         const stamp = await cu(`/task/${encodeURIComponent(taskId)}/field/${encodeURIComponent(DATE_FIELD_ID)}`, {
           method: "POST",
           body: JSON.stringify({ value: Date.now() })
         });
         actions.dateStamped = stamp.ok;
+        if (!stamp.ok) {
+          console.error("Date field set failed:", { status: stamp.status, body: stamp.text?.slice(0, 600) });
+        }
       }
 
       return res.status(200).json({ ok: true, taskId, listId, actions });
