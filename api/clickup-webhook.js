@@ -29,6 +29,7 @@ const MPUMALANGA_DESIGNS_LIST_ID    = process.env.MPUMALANGA_DESIGNS_LIST_ID    
 const MPUMALANGA_INJECTIONS_LIST_ID = process.env.MPUMALANGA_INJECTIONS_LIST_ID || "901208363209";
 const SSSA_DESIGNS_LIST_ID          = process.env.SSSA_DESIGNS_LIST_ID          || "901211315230";
 const TCO_DESIGNS_LIST_ID           = process.env.TCO_DESIGNS_LIST_ID           || "901207432882";
+const INTLOCAL_DESIGNS_LIST_ID      = process.env.INTLOCAL_DESIGNS_LIST_ID      || "901208400956";
 
 /** Entity dropdown field + option IDs (env > fallback) */
 const ENTITY_FIELD_ID = process.env.ENTITY_FIELD_ID || "af029e47-83b3-4172-9858-2402b111f5d6";
