@@ -5,7 +5,7 @@ import fetch from "cross-fetch";
 /** ===== Config & helpers ===== */
 const DEBUG = process.env.DEBUG === "true";
 const dlog  = (...a) => { if (DEBUG) console.log(...a); };
-const slog  = (...a) => console.log(...a); // single-line summary (always logs)
+const slog  = (...a) => console.log(...a); // concise summary (always logs)
 
 // Required secrets
 const SECRET = process.env.CLICKUP_WEBHOOK_SECRET;
@@ -51,6 +51,12 @@ const LIST_TO_ENTITY = new Map([
   [MPUMALANGA_INJECTIONS_LIST_ID, "MPUMALANGA"],
   [SSSA_DESIGNS_LIST_ID,          "SSSA"],
   [TCO_DESIGNS_LIST_ID,           "TCO"],
+]);
+
+/** Lists that should ALWAYS attach to Job Tracker (even if no entity mapping) */
+const ATTACH_SOURCE_LIST_IDS = new Set([
+  ...Array.from(LIST_TO_ENTITY.keys()).map(String),
+  String(INTLOCAL_DESIGNS_LIST_ID), // <- International Local Manufacture
 ]);
 
 /** Unified ClickUp fetch helper */
@@ -118,14 +124,16 @@ export default async function handler(req, res) {
     if (event === "taskCreated" && taskId) {
       let attached = false, dateStamped = false, entitySet = false, entityName = null;
 
-      // 3A) Attach to Job Tracker if this list is in our mapping
-      const entityForList = LIST_TO_ENTITY.get(String(listId));
-      const shouldAttach = Boolean(entityForList);
-      dlog("shouldAttach?", shouldAttach, "entityForList:", entityForList);
+      // 3A) Attach to Job Tracker if list is in the allow-list
+      const listKey = String(listId);
+      const entityForList = LIST_TO_ENTITY.get(listKey) || null;
+      const shouldAttach  = ATTACH_SOURCE_LIST_IDS.has(listKey);
+
+      dlog("shouldAttach?", shouldAttach, "entityForList:", entityForList, "listKey:", listKey);
 
       if (shouldAttach) {
         const add = await cu(`/list/${encodeURIComponent(JOB_TRACKER_LIST_ID)}/task/${encodeURIComponent(taskId)}`, { method: "POST" });
-        attached = add.ok || add.status === 409; // treat already-attached as success
+        attached = add.ok || add.status === 409; // 409 = already attached
         if (!attached) console.error("Add to Job Tracker failed:", { status: add.status, body: add.text?.slice(0, 600) });
       }
 
@@ -139,7 +147,7 @@ export default async function handler(req, res) {
         if (!stamp.ok) console.error("Date field set failed:", { status: stamp.status, body: stamp.text?.slice(0, 600) });
       }
 
-      // 3C) Set Entity dropdown (only if we know which one)
+      // 3C) Set Entity dropdown (only if mapping exists)
       if (entityForList) {
         const optionId = ENTITY_OPT[entityForList];
         if (optionId) {
