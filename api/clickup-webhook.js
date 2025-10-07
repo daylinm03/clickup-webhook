@@ -30,6 +30,7 @@ const MPUMALANGA_INJECTIONS_LIST_ID = process.env.MPUMALANGA_INJECTIONS_LIST_ID 
 const SSSA_DESIGNS_LIST_ID          = process.env.SSSA_DESIGNS_LIST_ID          || "901211315230";
 const TCO_DESIGNS_LIST_ID           = process.env.TCO_DESIGNS_LIST_ID           || "901207432882";
 const INTLOCAL_DESIGNS_LIST_ID      = process.env.INTLOCAL_DESIGNS_LIST_ID      || "901208400956";
+const NCOC_LIST_ID                  = process.env.NCOC_LIST_ID                  || "901213147743";
 
 /** Entity dropdown field + option IDs (env > fallback) */
 const ENTITY_FIELD_ID = process.env.ENTITY_FIELD_ID || "af029e47-83b3-4172-9858-2402b111f5d6";
@@ -39,6 +40,7 @@ const ENTITY_OPT = {
   "TCO":           process.env.ENTITY_OPT_TCO           || "26bfe07f-d208-4057-a84e-bc22b0e7bade",
   "MPUMALANGA":    process.env.ENTITY_OPT_MPUMALANGA    || "2ed7499d-47b9-4474-91fc-eebe9396683d",
   "SSSA":          process.env.ENTITY_OPT_SSSA          || "9ff0171b-62f7-4218-a962-0c4a45f5abcd",
+  "NCOC":          process.env.ENTITY_OPT_NCOC          || "4e4f5797-d3ab-44b6-84d9-f859baa14c26",
 };
 
 /** Map source list → which Entity to set */
@@ -51,6 +53,7 @@ const LIST_TO_ENTITY = new Map([
   [MPUMALANGA_INJECTIONS_LIST_ID, "MPUMALANGA"],
   [SSSA_DESIGNS_LIST_ID,          "SSSA"],
   [TCO_DESIGNS_LIST_ID,           "TCO"],
+  [NCOC_LIST_ID,                  "NCOC"],
 ]);
 
 /** Lists that should ALWAYS attach to Job Tracker (even if no entity mapping) */
