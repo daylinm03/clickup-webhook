@@ -31,6 +31,9 @@ const SSSA_DESIGNS_LIST_ID          = process.env.SSSA_DESIGNS_LIST_ID          
 const TCO_DESIGNS_LIST_ID           = process.env.TCO_DESIGNS_LIST_ID           || "901207432882";
 const INTLOCAL_DESIGNS_LIST_ID      = process.env.INTLOCAL_DESIGNS_LIST_ID      || "901208400956";
 const NCOC_LIST_ID                  = process.env.NCOC_LIST_ID                  || "901213147743";
+const TASK_HOURS_ENG_FIELD_ID  = "27043ad1-2437-4201-8d89-a4a306ff9c5b";
+const TASK_HOURS_DRFT_FIELD_ID = "44bed523-6bfd-448e-be47-3c5dd4f84cf4";
+const DEFAULT_HOURS_VALUE      = "STD:0-OT1:0-OT2:0";
 
 /** Entity dropdown field + option IDs (env > fallback) */
 const ENTITY_FIELD_ID = process.env.ENTITY_FIELD_ID || "af029e47-83b3-4172-9858-2402b111f5d6";
@@ -165,12 +168,29 @@ export default async function handler(req, res) {
           console.error("Missing option ID for entity:", entityForList);
         }
       }
+      // 3D) Set default Task Hours fields if attached to Job Tracker
+      let hoursSetEng = false, hoursSetDrft = false;
+      if (attached) {
+        const setEng = await cu(`/task/${encodeURIComponent(taskId)}/field/${encodeURIComponent(TASK_HOURS_ENG_FIELD_ID)}`, {
+          method: "POST",
+          body: JSON.stringify({ value: DEFAULT_HOURS_VALUE })
+        });
+        hoursSetEng = setEng.ok;
+        if (!setEng.ok) console.error("Task Hours - ENG set failed:", { status: setEng.status, body: setEng.text?.slice(0, 600) });
 
+        const setDrft = await cu(`/task/${encodeURIComponent(taskId)}/field/${encodeURIComponent(TASK_HOURS_DRFT_FIELD_ID)}`, {
+          method: "POST",
+          body: JSON.stringify({ value: DEFAULT_HOURS_VALUE })
+        });
+        hoursSetDrft = setDrft.ok;
+        if (!setDrft.ok) console.error("Task Hours - DRFT set failed:", { status: setDrft.status, body: setDrft.text?.slice(0, 600) });
+      }
       // **Single summary line**
       slog(
         `summary: event=taskCreated taskId=${taskId} listId=${listId} ` +
         `attached=${attached} dateStamped=${dateStamped} entitySet=${entitySet}` +
-        (entityName ? ` entity="${entityName}"` : "")
+        (entityName ? ` entity="${entityName}"` : "") + `hoursSetEng=${hoursSetEng} hoursSetDrft=${hoursSetDrft}`
+
       );
 
       return res.status(200).json({ ok: true, taskId, listId, attached, dateStamped, entitySet, entityName });
